@@ -484,19 +484,20 @@ for (j in seq(summercamp$title)) {
 
 # modify information  
 summercamp <- l %>%
+  mutate(title = as.character(title), short_descrip = as.character(short_descrip)) %>%
   group_by(title) %>%
   summarise(
     organizer = str_remove(short_descrip[1],"^主辦單位：") %>% ifelse(str_detect(.,"："),NA,.),
-    reg_date = grepl("^截止：",short_descrip) %>% {ifelse(sum(.) == 0, NA,short_descrip[.])},
-    reg_date = ifelse(is.na(reg_date),NA, 
-                      str_remove(short_descrip[grep("^截止：",short_descrip)],"[\u4E00-\u9FFF]+(?=：)：")),
+    reg_date = grepl("^截止：",short_descrip) %>% {ifelse(sum(.) == 0, NA,
+                                                       str_remove(short_descrip[grep("^截止：",short_descrip)],
+                                                                  "[\u4E00-\u9FFF]+(?=：)："))},
     act_date = short_descrip %>% .[str_which(., "(((時間)|(日期)|(日期 )|(時間 ))(?=(：|&)))|(星期)")] %>% 
       str_remove(., "[[\u4E00-\u9FFF][:blank:][:punct:]]+(?=(：|&))：") %>% paste0(.,collapse = ";"),
     url = short_descrip %>% .[str_which(.,"https")] %>% .[-c(10:12)] %>% 
       str_remove(.,"[\u4E00-\u9FFF]+(?=：)：") %>% paste0(.,collapse = ";"),
     age_limit = short_descrip %>% .[str_which(.,"^對象：")] %>% 
       str_remove(.,"[\u4E00-\u9FFF]+(?=：)：") %>% paste0(.,collapse = ";"),
-    description = short_descrip[NROW(title)],
+    description = ifelse(is.na(short_descrip[NROW(title)]), title, short_descrip[NROW(title)]),
     .groups = "drop"
   ) %>%
   left_join(summercamp, ., by = "title") %>%
@@ -512,6 +513,13 @@ summercamp <- summercamp %>% .[-c(4,19,34,43,47,48,54,56,69,78),]
 activities <- rbind(activities, summercamp) 
 ```
 
+# try 斷字
+```{r}
+library(tm);library(wordcloud);library(RColorBrewer)
+#activitiescorpus <- 
+orpus(VectorSource(activities$description))
+`
+``
 
 # output
 ```{r}
