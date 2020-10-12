@@ -1,0 +1,529 @@
+---
+title: "activities clawer"
+output: html_document
+---
+
+```{r}
+library(rvest);library(magrittr);library(stringr);library(dplyr);library(xlsx);library(xml2);library(stringr)
+```
+
+# 台大演講網 https://speech.ntu.edu.tw/ntuspeech/Topic/ (排除)
+``{r}
+ntu.speech.url <- paste0("https://speech.ntu.edu.tw/ntuspeech/Topic/detail/id-",c(5,7,25,17,15,8,26,16,23,19,22,21,10))
+
+speech <- data.frame("source" = "ntu.speech",
+                         "url" = ntu.speech.url)
+``
+
+* find speech title, video url, img
+``{r}
+activities <- data.frame()
+for (i in speech$url) {
+  path = "/html/body/div/div/div/div/div[1]/div"
+  htmlconten <- read_html(i) 
+  
+  title <- htmlconten %>% html_nodes(xpath = path) %>%
+    html_nodes("h4") %>% html_text() %>%
+    str_remove_all(.,"[\r\n]+(?<=\r\n)[:blank:]+")
+  
+  date <- htmlconten %>% 
+    html_nodes(xpath = path) %>% 
+    html_nodes("div.col-sm-7.col-xs-6 div.videolist-date") %>%
+    html_text() %>%
+    str_remove_all(.,"[\r\n]+(?<=\r\n)[:blank:]+")
+  
+  url <- htmlconten %>% html_nodes(xpath = path) %>%
+    html_nodes("div a") %>% html_attr(., "href") %>%
+    unique()
+  
+  img <- htmlconten %>% html_nodes(xpath = path) %>%
+    html_nodes("div img") %>% html_attr(.,"src")
+  
+  activities <- data.frame("from" = "ntu speech",
+             "title" = title,
+             "organizer" = "台大演講網",
+             "date" = date,
+             "age_limit" = NA,
+             "sub_type" = NA,
+            "img_url" = img,
+            "url" = url,
+            "description" = title) %>%
+    rbind(activities,.)
+}
+``
+
+
+# 青年署活動
+```{r}
+yda.to_df <- function(url, type){
+  path = "/html/body/form/section[2]/div[2]/div[2]"
+  read_html(url) %>%
+  html_nodes(xpath = path) -> html.need
+  
+  html.need %>%
+    html_nodes("div div.project div.info") %>%
+    html_text() %>%
+    str_remove(., "^[:blank:]+") %>%
+    str_remove(., "[:blank:]+more[:blank:]+") %>%
+    str_split(., "      ") -> info
+  
+  html.need %>%
+    html_nodes("div div.project div.info a") %>%
+    html_attr(.,"href") %>%
+    paste0("https://youth-resources.yda.gov.tw/",.) -> act.url
+  
+  html.need %>%
+    html_nodes("div div.project div.info div.picture img") %>%
+    html_attr(., "src") %>%
+    paste0("https://youth-resources.yda.gov.tw/",.) -> img.url
+  
+  # 整理成data frame
+  data.frame("from" = "yda",
+             "type_1" = NA,
+             "type_2" = rep(type, length(info)),
+             "type_3" = NA,
+             "title" = NA,  # info.title
+             "organizer" = NA,  # info.organizer
+             "date" = NA,  # info.date
+             "age_limit" = NA,  # info.limit
+             "sub_type" = NA,
+             "url" = NA,
+             "img_url" = NA,
+             "description" = NA) -> yda  # info.sub
+
+  for (i in seq(info)) {
+    yda$title[i] <- info[[i]][1]
+    yda$organizer[i] <- info[[i]][2]
+    yda$date[i] <- info[[i]][3] %>% 
+      str_remove(., "申請期限：")
+    yda$age_limit[i] <- info[[i]][5] %>%
+      str_remove(.,"申請對象：")
+    yda$sub_type[i] <- info[[i]][4] %>%
+      str_remove(.,"申請類型：")
+    yda$img_url[i] <- img.url[i]
+    yda$url[i] <- act.url[i]
+  }
+  as.character(yda$type_2) -> yda$type_2
+  return(yda)
+}
+
+get_descrip <- function(url){  # yda$url[i]
+  url %>% read_html(.) %>%
+    html_nodes("div.desc p") %>%
+    html_text()
+}
+```
+
+
+## 公共參與
+```{r}
+yda.to_df("https://youth-resources.yda.gov.tw/subject/index/rUDNGGp_8qknup-tq6WaPQ/VdG5dsG8L3SHsMOYgWI_Yw", "社會參與") -> yda
+```
+
+### type_1 和 type_2, type_3 修改
+``{r}
+yda$type_1[c(1:4,6:10)] <- "職涯選擇"
+yda$type_1[5] <- "精神成長"
+yda$type_1[9] <- "精神成長"
+
+yda$type_3[c(2:3,7)] <- "創新創意"
+yda$type_3[c(5,8)] <- "藝術文化"
+yda$type_3[c(6)] <- "農業"
+
+yda$type_2[c(6)] <- "創新創意"
+yda$type_2[4] <- NA
+``
+
+### 爬每個活動的說明
+```{r}
+for (i in c(1:3)) {
+  yda$url[i] %>% read_html(.) %>%
+    html_nodes("div.desc p") %>%
+    html_text() %>%
+    .[1] -> yda$description[i]
+}
+
+for (i in c(4:6)) {
+  yda$url[i] %>% read_html(.) %>%
+    html_nodes("div.desc p") %>%
+    html_text() %>%
+    .[1:4] %>%
+    paste(., collapse = ";") -> yda$description[i]
+}
+
+for (i in c(7:10)) {
+  yda$url[i] %>% read_html(.) %>%
+    html_nodes("div.desc p") %>%
+    html_text() %>%
+    .[2] %>%
+    paste(., collapse = ";") -> yda$description[i]
+}
+# 將活動併入青年署活動的總表
+activities.yda <- data.frame()
+rbind(activities.yda, yda) -> activities.yda
+activities.yda
+```
+
+## 創新學習-type need change
+```{r}
+yda.to_df("https://youth-resources.yda.gov.tw/subject/index/3NSVufX3zV_NfqYtUIupkg/VdG5dsG8L3SHsMOYgWI_Yw", "創新創意") -> yda
+```
+
+### 修改type
+``{r}
+yda$type_1[c(1,4,5,7,8)] <- "技術提升"
+yda$type_1[c(2,6,10)] <- "職涯選擇"
+yda$type_1[c(3,9)] <- "精神成長"
+
+yda$type_3[c(2,4)] <- "社會參與"
+yda$type_3[c(1,10)] <- "資訊"
+yda$type_3[c(3:5,7)] <- "藝術文化"
+yda$type_3[c(8)] <- "農業"
+yda$type_3[9] <- "自然科學"
+yda$type_2[6] <- NA
+``
+
+### 加description
+```{r}
+for (i in c(1:2)) {
+  yda$url[i] %>%
+    read_html() %>%
+    html_nodes("div.desc p") %>%
+    html_text() %>% .[2] -> yda$description[i]
+}
+
+for (i in c(3,5)) {
+  yda$url[i] %>%
+    read_html() %>%
+    html_nodes("div.desc p") %>%
+    html_text() %>% 
+    {paste(.[c(1:2)],collapse = "")} -> yda$description[i]
+}
+
+for (i in c(4, 6:10)) {
+  yda$url[i] %>%
+    read_html() %>%
+    html_nodes("div.desc p") %>%
+    html_text() %>% 
+    .[1] -> yda$description[i]
+}
+
+# 將活動併入青年署活動的總表
+rbind(activities.yda, yda) -> activities.yda
+```
+
+## 就業創業
+```{r}
+yda.to_df("https://youth-resources.yda.gov.tw/subject/index/NXWB0vXeK9r7IQwKq3GEjw/VdG5dsG8L3SHsMOYgWI_Yw", "就業創業") -> yda
+```
+
+``{r}
+yda$type_1 <- "職涯選擇"
+yda$type_1[10] <- "技術提升"
+
+yda$type_2[c(1:5,7)] <- "創新創意"
+yda$type_2[c(6)] <- "商管"
+yda$type_2[c(8)] <- "社會參與"
+yda$type_2[9] <- NA
+
+yda$type_3[c(1,3)] <- "藝術文化"
+yda$type_3[c(2,4,7)] <- "商管"
+yda$type_3[c(5)] <- "農業"
+``
+
+```{r}
+for (i in c(1,6:10)) {
+  yda$url[i] %>%
+    read_html() %>%
+    html_nodes("div.desc p") %>%
+    html_text() %>% .[1] -> yda$description[i]
+}
+
+for (i in c(2,3)) {
+  yda$url[i] %>%
+    read_html() %>%
+    html_nodes("div.desc p") %>%
+    html_text() %>% .[2] -> yda$description[i]
+}
+
+yda$url[4] %>%
+    read_html() %>%
+    html_nodes("div.desc p") %>%
+    html_text() %>% .[c(2:3)] %>% 
+    {paste(.[c(1:2)],collapse = "")} -> yda$description[4]
+
+yda$url[5] %>%
+    read_html() %>%
+    html_nodes("div.desc p") %>%
+    html_text() %>% .[c(1:4)] %>% 
+    {paste(.[c(1:4)],collapse = "。")} -> yda$description[5]
+
+# 將活動併入青年署活動的總表
+rbind(activities.yda, yda) -> activities.yda
+```
+
+## 國際參與
+
+```{r}
+yda.to_df("https://youth-resources.yda.gov.tw/subject/index/eJ1WgKmY6TZd6ZZ7YFbcmQ/VdG5dsG8L3SHsMOYgWI_Yw", "社會參與") -> yda
+```
+
+### 修改 type
+``{r}
+yda$type_1[c(1:2,4)] <- "職涯選擇"
+yda$type_1[c(3,5,9)] <- "精神成長"
+yda$type_1[c(6:8,10)] <- "技術提升"
+
+yda$type_2[c(2,6:8)] <- "創新創意"
+yda$type_2[c(4)] <- "商管"
+
+yda$type_3[c(2)] <- "商管"
+yda$type_3[c(8)] <- "藝術文化"
+yda$type_3[c(10)] <- "農業"
+``
+
+### description
+```{r}
+for (i in c(1,4,6,7,9,10)) {
+  get_descrip(yda$url[i])[1] -> yda$description[i]
+}
+
+for (i in c(2,3,8)) {
+  get_descrip(yda$url[i])[2] -> yda$description[i]
+}
+
+get_descrip(yda$url[5])[5:7] %>%
+  paste(.,collapse = "") -> yda$description[5]
+
+# 將活動併入青年署活動的總表
+rbind(activities.yda, yda) -> activities.yda
+```
+
+
+## activities.yda to activites
+```{r}
+activities.yda %>% select(., -type_1, -type_2, -type_3, -sub_type, act_date = date) %>%
+  mutate(reg_date = NA) -> activities
+
+activities
+```
+
+
+# 大學營隊
+* 高師附中 http://sites.tea.nknush.kh.edu.tw/fu-dao-zhong-xin/da-xue-ying-dui-tuan-dui
+```{r}
+university.url = "http://sites.tea.nknush.kh.edu.tw/fu-dao-zhong-xin/da-xue-ying-dui-tuan-dui"
+
+# get titles
+camp.title <- read_html(university.url) %>%
+  html_nodes(xpath = "/html/body/div[2]/div/div[1]/div/div[2]/div/table") %>%
+  html_nodes("tbody td.goog-ws-list-url") %>%
+  html_text()
+
+# get link of camp
+camp.url <- read_html(university.url) %>%
+  html_nodes(xpath = "/html/body/div[2]/div/div[1]/div/div[2]/div/table") %>%
+  html_nodes("tbody td.goog-ws-list-url a") %>%
+  html_attr(., "href")
+
+# arrange to a data frame
+camp <- data.frame("from" = NA,
+                   "title" = camp.title,
+                   "url" = camp.url)
+camp$url <- camp$url %>% str_remove(., "%20(?=/)")  # modify the link
+
+# get camps with useful link
+camp <- camp[str_which(camp$url, "^https"),]
+camp <- camp[c(1:3,7:15),]
+```
+
+```{r}
+# modify detail information function
+modify_info <- function(i, fr, organ, reg_d, act_d, age, img, descripe){
+  camp$from[i] <- fr
+  camp$organizer[i] <- organ
+  camp$reg_date[i] <- reg_d
+  camp$act_date[i] <- act_d
+  camp$age_limit[i] <- age
+  camp$img_url[i] <- img
+  camp$description[i] <- descripe
+  return(camp)
+}
+```
+
+```{r}
+# get detail information
+# 北大金融營
+camp <- modify_info(1, "國立台北大學", "國立台北大學", "2020/10/1-10/31","2021/2/1-2/4","15歲~18歲",
+            "https://scontent.ftpe8-2.fna.fbcdn.net/v/t1.0-0/p180x540/118695561_3413912401999814_953501754491201642_o.jpg?_nc_cat=103&_nc_sid=e3f864&_nc_ohc=IE5V3eB9KL0AX_xTGzP&_nc_ht=scontent.ftpe8-2.fna&tp=6&oh=ac5ff749dc07fd748dcb5695573f8a6b&oe=5FA51667", "國立臺北大學第十二屆金融研習營")
+```
+
+```{r}
+# 交大奈米營
+camp <- modify_info(2, "國立交通大學", "國立交通大學", "2020/10/4 - 12/31","2021/2/5-2/9","15歲~18歲",
+            "https://scontent.ftpe8-3.fna.fbcdn.net/v/t1.0-9/s960x960/120260955_3441678105890548_3420861663583180682_o.jpg?_nc_cat=106&_nc_sid=e3f864&_nc_ohc=tNOUVmQAWvEAX9u2gzI&_nc_ht=scontent.ftpe8-3.fna&tp=7&oh=54e9b98b679d19180be250c96f67e416&oe=5FA744FE", 
+            "2021國立交通大學奈米營報名表單正式開跑啦！相信身為高中生的你你你你你還有你，絕對不會知道自己真正喜歡什麼擅長什麼，也不知道自己將來要念什麼科系，這時候來奈米科學營將是你最好的選擇！奈米學士班是全台唯一橫跨電子/材料/生科/光電 四個領域的學系。可以讓你充分體驗四大領域的課程與精髓，讓自己不再迷惘，對未來規劃絕對幫助甚大！不論你想探索自己喜歡的領域，抑或是想認識奈米學士班，甚至只是寒假閒閒沒事幹，這時候就來交通大學奈米科學營，體驗四大領域專屬課程，更有寓教於樂的各種遊戲挑戰，還能結識來自全台各路的夥伴，讓你的寒假不再空白，在奈米科學營發現你自己！在2021寒假，給自己一個不一樣的選擇，認識全新的你自己。")
+```
+
+```{r}
+# 嘉大廣告營
+camp <- modify_info(3, "國立嘉義大學", "國立嘉義大學", "2020/10/2 - 12/01","2021/01/26-01/29", "15歲~18歲",
+            "https://scontent.ftpe8-2.fna.fbcdn.net/v/t1.0-9/s960x960/118943086_831628697576234_1507107965555619985_o.jpg?_nc_cat=100&_nc_sid=e3f864&_nc_ohc=3fBvcJDLcOUAX_3dLCA&_nc_ht=scontent.ftpe8-2.fna&tp=7&oh=87eb5c96ebb3f7722ad1679d7a2a6760&oe=5FA78D82",
+            "除了空拍機、文案簡報設計、鏡頭語言、Pr剪輯之外，還有很多精彩的戶外活動，心動不如馬上行動趕緊的報名躁起來:空拍機 | 穿梭於藍天的感動，Adobe Illustrator CC | 基礎工具繪圖技巧，廣告文案/簡報設計/鏡頭語言/影像構圖 | 文案製作拍攝技巧(簡報設計是新增加的課程哦，一個文案呈現時如何更抓住別人的目光，絕對不要錯過😆)，Adobe Premiere Pro | 後期後製剪輯調色")
+```
+
+```{r}
+# 中國文化大學 「 大學生活體驗營 飛躍俄羅斯 」 
+camp <- modify_info(4, "中國文化大學", "中國文化大學", "2020/09/28-10/18","2020/10/31", "15歲~18歲","https://crgarl.pccu.edu.tw/ezfiles/80/1080/img/2092/446509105.jpg", "活動內容以「俄羅斯探索課程」為主軸，同時安排有「校園導覽」。「俄羅斯探索課程」包括俄羅斯文化介紹、美食及傳統手工藝品實作、學生遊學見聞分享等展現本系特色。「校園導覽」則規劃帶領學生認識本校圖書館之俄文藏書、體育館等之學習環境。")
+```
+
+```{r}
+# 第十屆嘉義大學生化營 
+camp <- modify_info(5, "國立嘉義大學", "國立嘉義大學", "2020/09/28-11/30","2021/02/01-02/04","15歲~18歲",
+                    "https://static.wixstatic.com/media/af31fb_c4614b2ae1234b3bb52ac9a3daca0bab~mv2.png/v1/fill/w_469,h_645,al_c,q_85/%E7%94%9F%E5%8C%96%E7%87%9F%E6%B5%B7%E5%A0%B1%20%E5%AE%9A.webp",
+                    "課程一：微生物應用，微生物在我們生活中無所不在，有很多應用，像是農業的微生物肥料、醫療用抗生素、啤酒、醬油……等。課程二：粗DNA萃取，DNA是由五碳糖、含氮鹼基、磷酸等物質所組成，DNA這名詞我們並不陌生，想對它有更多了解嗎？想知道它對生物有多重要嗎?那就來參加第十屆生化營吧！課程三：化妝品 DIY，其實生活中的化妝品，也可以親手製作，透過不同化學原料組成，在經過不同的化學反應便可得讓你變漂亮的化妝品。課程四： 校外參訪。")
+```
+
+```{r}
+# 2021東海工設營-HIDEsign  
+camp <- modify_info(6, "東海大學", "東海大學", "2020/09/18-12/13","2021/1/23-1/27","15歲~18歲",
+                    "https://scontent.ftpe8-3.fna.fbcdn.net/v/t1.0-9/s960x960/119734703_758480898328972_3563036071666036088_o.jpg?_nc_cat=107&_nc_sid=e3f864&_nc_ohc=XfgueKrtEqQAX9C16uv&_nc_oc=AQkIOmkaAn-qXXelDmIvRo4t-L2UAEufDhpbqLKL3rCHif6yc9wykE_X_ZtQcPfOOZQ&_nc_ht=scontent.ftpe8-3.fna&tp=7&oh=ad3e8d6dfcd2a018ad9841f3e3cfb94d&oe=5FA53522",
+                    "將藉由設計課程、實作體驗、團體活動等方式帶領學員認識工業設計。")
+```
+
+```{r}
+# 離岸風電科學營(彰化場) 
+camp <- modify_info(7, "國立臺灣大學", "國立臺灣大學", NA,"場次一：2020/10/17 - 10/18, 場次二：2020/10/24 - 10/25","15歲~18歲",
+                    "https://lh6.googleusercontent.com/fo7iMfgoAKjSMCiffw2qohGYrvXd9Wco82if0fFvKXhHupPfwVHoVYU_pmeKABRFi9HrKKd8jQC3m5fgDjQM3qisW4099fVnXjyErE_hUzFtqBqfxW7MFX9UCOB6=w740",
+                    "風力發電是台灣重點發展項目科技，讓我們一起跟著臺灣大學的教授與資深科學講師們，一起來瞭解探究與動手學習吧！參與學員除了可以瞭解並動手學習最夯的能源科技外，還可與國立臺灣大學教授面對面交流，並前近實地參訪，以及動手組裝出風力發電機，全程參與並通過講師認證後，可獲國立臺灣大學單位學習證書，未來可憑此證書可享有優先參加進階主題科學營隊或活動的權利。")
+```
+
+```{r}
+# 生物醫學  電子工程實作營 & 心理諮商探索營 
+camp <- modify_info(c(8,9), "大碩青年關懷基金會", "大碩青年關懷基金會", NA, c("2020/10/18 或 2020/11/01", "2020/12/26"),"15歲~18歲",
+                    "https://lh6.googleusercontent.com/s0f2uS_f6GayVxCTzwzkM2dNlcWBH2TkZVZF5Fl2OOPiAFcaZWXrip1FYBsVuyRZ9bGePlC2_EO9A-r64l0IQIr5wrAe44l6fApJ7AvAndHiwzgGkJrLGt5wkd2d=w758",
+                    c("透過實作和史丹佛大學的創意思考課程模式，帶你了解電子工程與生物醫學結合的應用！除介紹人體姿勢與動作的生物力學，讓學員瞭解生物力學應用於醫學的廣泛面外，在醫學電子電路實作方面，將帶領學生實際動手完成助聽器作品，並認識醫療產品最基礎的構成。結合理論與實作，再搭配引進史丹大學的設計思考方法，讓學員腦力激盪將所吸收的醫學工程知識化為己用。","營隊宗旨主要是讓同學了解心理學相關內容以及諮商探索的部分，藉由老師的引導讓同學對心理學有初步的概念及提早認識大學課程內容，讓同學藉由營隊了解此領域是否與自身的興趣相符也對科系更有概念，老師會帶領同學示範心理諮商相關過程，去體驗心理諮商師要怎麼去同理患者及解決患者的困擾，成為讓患者依賴傾訴的心理諮商師，透過一天的營隊課程中也能學到初步入門的諮商技巧，也能讓人際關係更進一步！"))
+```
+
+```{r}
+# 2020職場達人探索營 
+camp <- modify_info(10, "大碩青年關懷基金會", "大碩青年關懷基金會", NA, "商管財經－2020/11/15;資訊工程－2020/11/22;法政學群－2020/12/13;醫藥衛生－2020/12/20","12歲~18歲",
+                    "https://lh6.googleusercontent.com/D29I4n8qxeuuMUeOlb8WcPh1dE1r7ZlsXfprGkoEoyWte_0VdBCSeCR82iq7cvnCxy6Q8aM4NlQUHDnUQ6sOki9bGpSP08cF5yqYPwakdeLS-w38XsaxIDk0ZG9C=w1520",
+                    "根據調查顯示，每年認為選錯科系的大學生不勝枚舉，甚至影響學生之後在職場中的表現，而當中最大的原因即是大多的學生不了解自己的性向和選系關係程度，因此對於科系的認識及相關職業的認識就是一個很重要的議題。因此本活動希望藉由與「職場達人互動」協助學子規劃職涯方向。職場達探索營舉辦《醫藥衛生類》、《商管財經類》、《資訊與工程學群類》、《法政學群類》職場講座，邀請該領域經驗豐富的達人，分享職場秘辛甘苦談／此行所需的特質能力／目前產業狀況，並藉由實作課程帶領，讓你更進一步瞭解產業現況幫助你未來選填科系志願！")
+```
+
+```{r}
+# MOCC一日考照營 
+camp <- modify_info(11, "大碩青年關懷基金會", "大碩青年關懷基金會", NA, "Word－2020/10/18 或 2021/03/14;Excel－2020/11/15 或 2021/05/23;PowerPoint－2020/12/20 或 2021/07/11", "15歲~18歲",
+                    "https://lh5.googleusercontent.com/S1_UHu5pBjl4qAcymdMAdwFcJmZAHki1a0wSZ0aqcotPk-KtfEqfJV_Xgcdg-uUBEQFYnvM9vEv07bVRGlhCBcPhqTy7w0hlxtZaApTdLWjV2-aTRRwcQc37oSg9=w1078",
+                    "Word-排版力, Excel-統整力, PowerPoint-設計力")
+```
+
+```{r}
+# 智慧護理全攻略研習營 
+camp <- modify_info(12, "大碩青年關懷基金會", "大碩青年關懷基金會", NA, "2020/12/12", "15歲~18歲",
+                    "https://lh4.googleusercontent.com/XtB0Bn0Z03z7BiEBf9ExPonxR3zrSWzn_nc2Gs8-0xjJ9R3uCGx7bYCemxRJR7QphkHCDQut2X-4VZIdUJxU2Muymv-UzgFAJrqYeDWCzos_yCgg2D4L27Stp-_X=w1252",
+                    "醫療智慧化照顧是現代也是未來的趨勢，為解決許多照護問題開發出具有創新、科技的智慧照護產品。本營隊結合亞洲大學護理學院護理學系，經由豐富的活動安排與設計，使同學身臨其境，在學習的情境中實踐、體驗與反思，並對於護理學系之專業領域有初步的認識。本次活動除了科系簡介之外，另安排實作課程，包含手術實境秀、孕婦及老人體驗、小兒急救照護處理，更有全台唯一之產婦模擬人Victoria高階設備讓同學體驗生產全記錄。期許同學參與本次一日體驗營後，能夠從中對於智慧照護與護理從業人員有更深一層的了解，並從中培養同學團隊合作、批判思考及解決問題的能力。")
+```
+
+```{r}
+# 併入activities
+activities <- rbind(activities, camp)
+```
+
+
+* 2020 夏令營和營隊資訊：https://ntdcamp.com/all-camp/ (part)
+```{r}
+summercamp.page.url<- paste0("https://ntdcamp.com/all-camp/","page/",c(1:10),"/")
+
+summercamp <- data.frame()
+for (i in seq(summercamp.page.url)) {
+  # title
+  summercamp.title <- read_html(summercamp.page.url[i]) %>%
+    html_nodes(xpath = "//div") %>%
+    html_nodes("div.title-wrapper p a") %>% 
+    html_text()
+
+  # 夏令營網站上的活動連結
+  summercamp.outer.url <- read_html(summercamp.page.url[i]) %>%
+    html_nodes(xpath = "//div") %>%
+    html_nodes("div.title-wrapper p a") %>% 
+    html_attr(.,"href")
+
+  # img
+  summercamp.img <- read_html(summercamp.outer.url[1]) %>%
+    html_nodes(xpath = "//div[2]/div") %>%
+    html_nodes("div a img") %>%
+    html_attr(.,"src") %>% .[3]
+    
+  # arrange title, img to a data frame
+  summercamp <- data.frame("from" = "2020 夏令營和營隊資訊",
+                           "title" = summercamp.title,
+                           "img_url" = summercamp.img,
+                           "outer_url" = summercamp.outer.url) %>% rbind(summercamp,.)
+}
+
+# get camp inside information put in data frame l
+l <- data.frame()
+for (j in seq(summercamp$title)) {
+  li <- summercamp$outer_url[j] %>% as.character %>%
+    read_html(.) %>%
+    html_nodes("div.product-short-description li") %>%
+    html_text()  #  str_remove(.,"[\u4E00-\u9FFF]+(?=：)：")
+  
+  li[NROW(li) + 1] <- summercamp$outer_url[j] %>% as.character %>%
+    read_html(.) %>%
+    html_nodes("div.tab-panels") %>%
+    html_text() %>%
+    str_remove_all(.,"[\n\t]+") %>%
+    ifelse(rlang::is_empty(.), NA, .)
+
+  l <- data.frame(title = summercamp$title[j], short_descrip = li) %>%
+    rbind(l,.)
+}
+
+# modify information  
+summercamp <- l %>%
+  mutate(title = as.character(title), short_descrip = as.character(short_descrip)) %>%
+  group_by(title) %>%
+  summarise(
+    organizer = str_remove(short_descrip[1],"^主辦單位：") %>% ifelse(str_detect(.,"："),NA,.),
+    reg_date = grepl("^截止：",short_descrip) %>% {ifelse(sum(.) == 0, NA,
+                                                       str_remove(short_descrip[grep("^截止：",short_descrip)],
+                                                                  "[\u4E00-\u9FFF]+(?=：)："))},
+    act_date = short_descrip %>% .[str_which(., "(((時間)|(日期)|(日期 )|(時間 ))(?=(：|&)))|(星期)")] %>% 
+      str_remove(., "[[\u4E00-\u9FFF][:blank:][:punct:]]+(?=(：|&))：") %>% paste0(.,collapse = ";"),
+    url = short_descrip %>% .[str_which(.,"https")] %>% .[-c(10:12)] %>% 
+      str_remove(.,"[\u4E00-\u9FFF]+(?=：)：") %>% paste0(.,collapse = ";"),
+    age_limit = short_descrip %>% .[str_which(.,"^對象：")] %>% 
+      str_remove(.,"[\u4E00-\u9FFF]+(?=：)：") %>% paste0(.,collapse = ";"),
+    description = ifelse(is.na(short_descrip[NROW(title)]), title, short_descrip[NROW(title)]),
+    .groups = "drop"
+  ) %>%
+  left_join(summercamp, ., by = "title") %>%
+  select(., -outer_url)
+
+# 排除activities有國小、幼稚園的活動, 
+# by using ".[grep("國小|幼兒園|暑假後升國一 ~ 國三|暑假後升小四~ 小六", .$age_limit),]" 來篩選
+summercamp <- summercamp %>% .[-c(4,19,34,43,47,48,54,56,69,78),]
+```
+
+```{r}
+# 併入 activities
+activities <- rbind(activities, summercamp) 
+```
+
+# try 斷字
+```{r}
+library(tm);library(wordcloud);library(RColorBrewer)
+#activitiescorpus <- 
+orpus(VectorSource(activities$description))
+`
+``
+
+# output
+```{r}
+write.csv(activities, "activities.csv")
+```
+
+
