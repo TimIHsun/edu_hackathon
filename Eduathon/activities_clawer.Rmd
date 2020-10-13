@@ -434,7 +434,7 @@ activities <- rbind(activities, camp)
 
 * 2020 夏令營和營隊資訊：https://ntdcamp.com/all-camp/ (part)
 ```{r}
-summercamp.page.url<- paste0("https://ntdcamp.com/all-camp/","page/",c(1:10),"/")
+summercamp.page.url<- paste0("https://ntdcamp.com/all-camp/page/",c(1:10),"/")
 
 summercamp <- data.frame()
 for (i in seq(summercamp.page.url)) {
@@ -449,20 +449,15 @@ for (i in seq(summercamp.page.url)) {
     html_nodes(xpath = "//div") %>%
     html_nodes("div.title-wrapper p a") %>% 
     html_attr(.,"href")
-
-  # img
-  summercamp.img <- read_html(summercamp.outer.url[1]) %>%
-    html_nodes(xpath = "//div[2]/div") %>%
-    html_nodes("div a img") %>%
-    html_attr(.,"src") %>% .[3]
     
   # arrange title, img to a data frame
   summercamp <- data.frame("from" = "2020 夏令營和營隊資訊",
                            "title" = summercamp.title,
-                           "img_url" = summercamp.img,
                            "outer_url" = summercamp.outer.url) %>% rbind(summercamp,.)
 }
+```
 
+```{r}
 # get camp inside information put in data frame l
 l <- data.frame()
 for (j in seq(summercamp$title)) {
@@ -470,6 +465,12 @@ for (j in seq(summercamp$title)) {
     read_html(.) %>%
     html_nodes("div.product-short-description li") %>%
     html_text()  #  str_remove(.,"[\u4E00-\u9FFF]+(?=：)：")
+  # img
+  li[NROW(li) +1] <- summercamp$outer_url[j] %>% as.character %>%
+    read_html(.) %>%
+    html_nodes(xpath = "//div[2]/div") %>%
+    html_nodes("div a img") %>%
+    html_attr(.,"src") %>% .[3]
   
   li[NROW(li) + 1] <- summercamp$outer_url[j] %>% as.character %>%
     read_html(.) %>%
@@ -481,20 +482,28 @@ for (j in seq(summercamp$title)) {
   l <- data.frame(title = summercamp$title[j], short_descrip = li) %>%
     rbind(l,.)
 }
+```
 
+```{r}
 # modify information  
 summercamp <- l %>%
   mutate(title = as.character(title), short_descrip = as.character(short_descrip)) %>%
   group_by(title) %>%
   summarise(
     organizer = str_remove(short_descrip[1],"^主辦單位：") %>% ifelse(str_detect(.,"："),NA,.),
-    reg_date = grepl("^截止：",short_descrip) %>% {ifelse(sum(.) == 0, NA,
-                                                       str_remove(short_descrip[grep("^截止：",short_descrip)],
-                                                                  "[\u4E00-\u9FFF]+(?=：)："))},
-    act_date = short_descrip %>% .[str_which(., "(((時間)|(日期)|(日期 )|(時間 ))(?=(：|&)))|(星期)")] %>% 
-      str_remove(., "[[\u4E00-\u9FFF][:blank:][:punct:]]+(?=(：|&))：") %>% paste0(.,collapse = ";"),
+    reg_date = grepl("^截止：",short_descrip) %>% 
+      {ifelse(sum(.) == 0, NA,str_remove(short_descrip[
+        grep("^截止：",short_descrip)],
+        "[\u4E00-\u9FFF]+(?=：)："))},
+    act_date = short_descrip %>% 
+      .[str_which(., "(((時間)|(日期)|(日期 )|(時間
+                  ))(?=(：|&)))|(星期)")] %>% 
+      str_remove(., 
+                 "[[\u4E00-\u9FFF][:blank:][:punct:]]+(?=(：|&))：") %>% 
+      paste0(.,collapse = ";"),
     url = short_descrip %>% .[str_which(.,"https")] %>% .[-c(10:12)] %>% 
       str_remove(.,"[\u4E00-\u9FFF]+(?=：)：") %>% paste0(.,collapse = ";"),
+    img_url = short_descrip[NROW(title)-1],
     age_limit = short_descrip %>% .[str_which(.,"^對象：")] %>% 
       str_remove(.,"[\u4E00-\u9FFF]+(?=：)：") %>% paste0(.,collapse = ";"),
     description = ifelse(is.na(short_descrip[NROW(title)]), title, short_descrip[NROW(title)]),
@@ -512,14 +521,6 @@ summercamp <- summercamp %>% .[-c(4,19,34,43,47,48,54,56,69,78),]
 # 併入 activities
 activities <- rbind(activities, summercamp) 
 ```
-
-# try 斷字
-```{r}
-library(tm);library(wordcloud);library(RColorBrewer)
-#activitiescorpus <- 
-orpus(VectorSource(activities$description))
-`
-``
 
 # output
 ```{r}
